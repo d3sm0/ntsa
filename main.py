@@ -3,7 +3,7 @@ import logging
 import shutil
 
 from base import (Dense, RNN, DARNN, Seq2Seq, SeriesNet, NP)
-from config import (dense, rnn, darnn, seq2seq, seriesnet, np, trainconfig)
+from config import (dense, rnn, darnn, seq2seq, seriesnet, np_config, trainconfig)
 from dataset import Dataset
 from train import (Trainer, Runner)
 from utils.dataset_utils import (load_data, train_test_split, make_features)
@@ -57,7 +57,7 @@ def select_model(model_type):
         config = seriesnet
     elif model_type == "np":
         Model = NP
-        config = np
+        config = np_config
     else:
         raise NotImplementedError()
 
@@ -111,7 +111,7 @@ def main(config):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train Model")
-    parser.add_argument('--model', type=str, default="dense", help='Model name in base path')
+    parser.add_argument('--model', type=str, default="np", help='Model name in base path')
     parser.add_argument('--path', type=str, default='tf/', help='Base path')
     parser.add_argument('--loss', type=str, default="smape", help='Loss type. "clf","smape", mae ')
     parser.add_argument('--mode', type=str, default="train", help='Set mode')
