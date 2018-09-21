@@ -24,7 +24,7 @@ Check nb/ for detailed description.
 This library comes with the following datasets:
 - [SML 2010](https://archive.ics.uci.edu/ml/datasets/SML2010)
 - [NASDAQ 100](http://cseweb.ucsd.edu/~yaq007/NASDAQ100_stock_data.html)
-- [Crpyto](TODO)
+- [Crypto-TODO](TODO)
 
 To adapt a new dataset, please check utils.dataset_utils.py.
 
@@ -57,7 +57,7 @@ python main.py --model rnn --loss mae --batch_size 12
 ---
 ## Results on test data
 
-![np](nb/np_sml.png)
+![np](nb/img/np_sml.png)
 
 
 ```bash
