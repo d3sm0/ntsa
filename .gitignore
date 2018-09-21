@@ -1,0 +1,6 @@
+__pycache__/
+nb/.ipynb_checkpoints
+utils/__pycache__/
+tf/*
+.idea/
+.DS_Store
