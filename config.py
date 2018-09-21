@@ -45,7 +45,7 @@ wavenet = {
     'd_rate': 3
 }
 
-np = {
+np_config = {
     'encoder': 32,
     'decoder': 32,
     'latent': 4,

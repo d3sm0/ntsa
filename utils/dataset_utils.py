@@ -3,8 +3,8 @@ import os
 import numpy as np
 import pandas as pd
 
-NASDAQ = os.path.join(os.getcwd(), 'data/nasdaq.pkl')
-SML = os.path.join(os.getcwd(), 'data/sml.pkl')
+NASDAQ = './data/nasdaq.pkl'
+SML = './data/sml.pkl'
 
 
 def load_data(dataset):

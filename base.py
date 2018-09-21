@@ -3,7 +3,7 @@ import logging
 import tensorflow as tf
 
 from utils.tf_utils import (summary_op, selu, clf_metrics, fc_block, sn_block, clip_grads, smape, regr_metrics,
-                            conv1d_v2)
+                            conv1d_v2, kaf)
 
 if not tf.VERSION == '1.10.1':
     tf.logging.log(tf.logging.WARN, "You should update tensorflow to 1.10.1")
@@ -342,7 +342,6 @@ class NP(Base):
     def __init__(self, input_shape, config, scope='np'):
         super(NP, self).__init__(input_shape, config, scope=scope)
         self._config.dist = "bernoulli" if self._config.loss == "clf" else "normal"
-        # TODO this doesn't quite work yet
 
     def _init_graph(self):
         with tf.variable_scope(self._scope):
@@ -410,13 +409,15 @@ class NP(Base):
                 z_hat = get_z(g, self._proj_shape, dist=self._config.dist)
                 self.y_hat = z_hat[0] * self.std + self.mu
                 self.h = z_hat[0]
+                self.sigma = z_hat[1]
 
 
 def map_xr(x, y, units, output_shape, h_dim=3):
     seq_len = x.get_shape()[1]
     pred_len = y.get_shape()[1]
-    if seq_len != pred_len:
-        y = tf.tile(y, (1, seq_len, 1))
+    s = seq_len // pred_len
+    if s > 1:
+        y = tf.tile(y, (1, s, 1))
 
     h = tf.concat([x, y], axis=2)
 
@@ -435,8 +436,9 @@ def map_zx(z, x_target, units):
     batch_size = tf.shape(x_target)[0]
     samples = z.get_shape()[0]
 
-    z_tile = x_target.get_shape()[1] - z.get_shape()[1] + 1
-
+    seq_len = x_target.get_shape()[1]
+    pred_len = z.get_shape()[1]
+    z_tile = seq_len // pred_len
     z = tf.expand_dims(z, axis=1)
     z = tf.tile(z, (1, batch_size, z_tile, 1))
     x_target = tf.expand_dims(x_target, axis=0)
@@ -603,7 +605,7 @@ class InputAttention(Attention):
                 self._memory], axis=2)  # batch_size, input_shape, cell_size + seq_len
             x = self._memory_layer(x)
             x = tf.squeeze(x, axis=-1)
-            alpha = tf.nn.softmax(x)
+            alpha = tf.nn.softmax(kaf(x, name='kaf') + x)
             x_tilde = tf.multiply(alpha, query)
             return x_tilde
 
@@ -731,4 +733,3 @@ def mask_output(h, seq_len, pred_len):
     if seq_len != pred_len:
         h = h[:, -pred_len:, :]
     return h
-
