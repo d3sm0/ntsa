@@ -41,14 +41,13 @@ def set_seed(seed=0):
 
 def fc_block(h, units, act=tf.nn.relu, keep_prob=None, init=tf.initializers.variance_scaling, scope="fc_block",
              is_training=None):
-    with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
-        h = tf.layers.dense(h, units=units, kernel_initializer=init, name="fc")
-        if is_training is not None:
-            h = tf.layers.batch_normalization(h, training=is_training)
-        if keep_prob is not None:
-            h = tf.nn.dropout(h, keep_prob=keep_prob)
-        if act is not None:
-            h = act(h)
+    h = tf.layers.dense(h, units=units, kernel_initializer=init, name=scope, reuse=tf.AUTO_REUSE)
+    if is_training is not None:
+        h = tf.layers.batch_normalization(h, training=is_training)
+    if keep_prob is not None:
+        h = tf.nn.dropout(h, keep_prob=keep_prob)
+    if act is not None:
+        h = act(h)
     return h
 
 
@@ -91,8 +90,6 @@ def conv1d(x, filters, kernel_size, strides=1, padding='causal', dilation_rate=1
         # assert seq_len % dilation_rate == 0
 
         w = tf.get_variable('kernel', shape=(kernel_size, h, filters), dtype=tf.float32, initializer=init)
-        if use_bias:
-            b = tf.get_variable('bias', shape=(filters,), dtype=tf.float32, initializer=tf.initializers.zeros)
 
         if padding == 'causal':
             # causal (dilated) convolution:
@@ -108,38 +105,10 @@ def conv1d(x, filters, kernel_size, strides=1, padding='causal', dilation_rate=1
             strides=(strides,),
             padding=padding)
         if use_bias:
+            b = tf.get_variable('bias', shape=(filters,), dtype=tf.float32, initializer=tf.initializers.zeros)
             out = tf.add(out, b)
 
     return activation(out)
-
-
-def conv1d_v2(x, filters, kernel_size, strides=1, padding='causal', dilation_rate=1, activation=lambda x: x,
-              init=tf.initializers.variance_scaling, use_bias=True, keep_prob=None, scope="conv1d_v2"):
-    raise NotImplementedError()
-    with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
-        batch_size, seq_len, features = x.get_shape()
-
-        if padding == "causal":
-            shift = (kernel_size // 2) + (dilation_rate - 1) // 2
-            pad = tf.zeros([batch_size, shift, features])
-            x = tf.concat([pad, x], axis=1)
-
-        w = tf.get_variable("kernel",
-                            initializer=init,
-                            shape=[kernel_size, features, filters])
-        z = tf.nn.convolution(x, w, padding="SAME", dilation_rate=dilation_rate)
-
-        if use_bias:
-            b = tf.get_variable("bias", initializer=tf.zeros_initializer, shape=(filters,))
-            z = z + b
-
-        if activation is not None:
-            z = activation(z)
-        if keep_prob is not None:
-            z = tf.nn.dropout(z, keep_prob)
-        if padding == "causal":
-            z = z[:, :-shift, :]
-        return z
 
 
 def clip_grads(loss, params, clip=20.):

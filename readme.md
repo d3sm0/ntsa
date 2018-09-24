@@ -6,7 +6,7 @@ Yet I struggle to find something simple to use, comprehnsive and flexible for 1D
 
 This library is a collection of recent models for 1D time-series forecast, either 1 step, multi-step and auto-regressive.
 
-The models are not all mine. Wavenet credits goes to the great work of [Sean Vasquez](https://github.com/sjvasquez/) and the Neural Process implementation is inspired by [Kaspar Märtens](https://github.com/kasparmartens/) who did a great work in cracking the first implementation of the paper. Thank you guys!
+The models are not all mine. Wavenet credits goes to [Sean Vasquez](https://github.com/sjvasquez/) and the Neural Process implementation is inspired by [Kaspar Märtens](https://github.com/kasparmartens/). They did an amazing job, thank you guys!
 
 This repo is still under development and the code is poorely commented, just open an issue or ping me directly.
 
@@ -24,7 +24,9 @@ Check nb/ for detailed description.
 This library comes with the following datasets:
 - [SML 2010](https://archive.ics.uci.edu/ml/datasets/SML2010)
 - [NASDAQ 100](http://cseweb.ucsd.edu/~yaq007/NASDAQ100_stock_data.html)
-- [Crypto-TODO](TODO)
+- BTC Exchange
+
+Pickle file can be found [here](https://drive.google.com/open?id=0B3B22Hd5PMxSaVpsYmRHU2ZJYWc).
 
 To adapt a new dataset, please check utils.dataset_utils.py.
 

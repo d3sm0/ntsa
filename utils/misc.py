@@ -12,6 +12,8 @@ import numba
 import numpy as np
 import pandas as pd
 
+from scipy.spatial.distance import pdist, squareform
+
 log = logging.getLogger('tensorflow')
 
 class Folder(enum.Enum):
@@ -132,6 +134,14 @@ def regr_metrics(y, y_hat):
         'smape': np.mean(smape(y, y_hat))
     }
 
+
+# https://www.kaggle.com/tigurius/recuplots-and-cnns-for-time-series-classification
+def recurrence_plot(s, eps=0.1, steps=10, metric='euclidean'):
+    d = pdist(s, metric=metric)
+    d = np.floor(d / eps)
+    d[d > steps] = steps
+    Z = squareform(d)
+    return Z
 
 def smape(y, y_hat, eps=0.1):
     summ = np.maximum(np.abs(y) + np.abs(y_hat) + eps, 0.5 + eps)

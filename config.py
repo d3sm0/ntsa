@@ -34,12 +34,13 @@ rnn = {
     "encoder": 64,
     "alpha": 1e-6,  # 1e-6,
     "beta": 1e-6,  # 1e-6
-    "attn":True,
+    "attn": True,
 }
 
 wavenet = {
-    'encoder': 128,
-    'layers': 3,
+    'encoder': 16,
+    'kernel_size': 2,
+    'layers': 1,
     'res': 32,
     'skip': 32,
     'd_rate': 3
@@ -74,8 +75,8 @@ parserconfig = {
 
 trainconfig = {
     "seq_len": 12,
-    "pred_len": 6,
-    "test_len": 6,
+    "pred_len": 12,
+    "test_len": 12,
     "ar": False,
     "use_x": False,
     "decay_steps": 1e10,

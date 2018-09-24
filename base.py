@@ -3,7 +3,7 @@ import logging
 import tensorflow as tf
 
 from utils.tf_utils import (summary_op, selu, clf_metrics, fc_block, sn_block, clip_grads, smape, regr_metrics,
-                            conv1d_v2, kaf)
+                            conv1d)
 
 if not tf.VERSION == '1.10.1':
     tf.logging.log(tf.logging.WARN, "You should update tensorflow to 1.10.1")
@@ -180,25 +180,26 @@ class SeriesNet(Base):
             h = tf.nn.leaky_relu(h, alpha=0.1)
             self.h = self._project_output(h)
 
-
 class WaveNet(Base):
-    # TODO debug me
-    def __init__(self, input_shape, output_shape="clf"):
-        super(WaveNet, self).__init__(input_shape, output_shape, scope="wavenet")
+    def __init__(self, input_shapes, config, scope="wavenet"):
+        super(WaveNet, self).__init__(input_shapes, config=config,scope=scope)
 
         self._dilation = [2 ** idx for idx in range(self._config.d_rate)] * self._config.layers
-        self._kernel = [2 for idx in range(self._config.d_rate)] * self._config.layers
+        self._kernel = [self._config.kernel_size for idx in range(self._config.d_rate)] * self._config.layers
 
     def _init_graph(self):
         # x and x_features
-        x = tf.reshape(self.x, shape=(-1, self._config.seq_len, self.x.get_shape()[-1]))
-        x_fetures = tf.reshape(self.x_features, shape=(-1, self._config.seq_len, self.x_features.get_shape()[-1]))
-        y_features = tf.reshape(self.y_features, shape=(-1, self._config.pred_len, self.y_features.get_shape()[-1]))
+        x = self.x[:, :, :1]
+        x_features = self.x[:,:, 1:]
+        y_features = self.y_features
 
-        y_hat, conv_inputs = self._encode(tf.concat([x, x_fetures], axis=2), scope="encode")
-        # x + y_features
-        self._encode(tf.concat([x, y_features], axis=1), scope="decode")
-        self.y_hat = self._decode(y_hat, conv_inputs, y_features)
+        with tf.variable_scope(self._scope):
+            y_hat, conv_inputs = self._encode(tf.concat([x, x_features], axis=2), scope="encode")
+            # x + y_features
+            self._encode(tf.concat([x, y_features], axis=2), scope='decode')
+            # self._decode(tf.concat([x, y_features], axis=2), scope="decode")
+            h = self._decoder(y_hat, conv_inputs, y_features)
+            self.h = self._project_output(h)
 
     def _encode(self, x, scope="encode"):
         with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
@@ -206,7 +207,7 @@ class WaveNet(Base):
             skips = []
             conv_inputs = [x]
             for i, (dilation, filter_width) in enumerate(zip(self._dilation, self._kernel)):
-                h = conv1d_v2(x, 2 * self._config.res, kernel_size=filter_width, dilation_rate=dilation,
+                h = conv1d(x, 2 * self._config.res, kernel_size=filter_width, dilation_rate=dilation,
                               scope='conv_{}'.format(i))
 
                 f, g = tf.split(h, 2, axis=2)
@@ -225,9 +226,48 @@ class WaveNet(Base):
             y_hat = fc_block(h, units=1, act=None, scope="proj_2")
             return y_hat, conv_inputs[:-1]
 
-    def _decode(self, x, conv_inputs, features):
-        batch_size = tf.shape(x)[0]
+    def _decode(self, x, scope='decode'):
+        with tf.variable_scope(scope,reuse=tf.AUTO_REUSE):
 
+            inputs = fc_block(
+                x,
+                units=self._config.res,
+                act=tf.nn.tanh,
+                scope='x-proj'
+            )
+
+            skip_outputs = []
+            conv_inputs = [inputs]
+            for i, (dilation, filter_width) in enumerate(zip(self._dilation, self._kernel)):
+                dilated_conv = conv1d(
+                    inputs,
+                    filters=2 * self._config.res,
+                    kernel_size=filter_width,
+                    dilation_rate=[dilation],
+                    scope='conv_{}'.format(i)
+                )
+                conv_filter, conv_gate = tf.split(dilated_conv, 2, axis=2)
+                dilated_conv = tf.nn.tanh(conv_filter) * tf.nn.sigmoid(conv_gate)
+
+                outputs = fc_block(
+                    dilated_conv,
+                    self._config.skip + self._config.res,
+                    scope='fc_{}'.format(i)
+                )
+                skips, residuals = tf.split(outputs, [self._config.skip, self._config.res], axis=2)
+
+                inputs += residuals
+                conv_inputs.append(inputs)
+                skip_outputs.append(skips)
+
+            skip_outputs = tf.nn.relu(tf.concat(skip_outputs, axis=2))
+            h = fc_block(skip_outputs, 128, scope='proj_1', act=tf.nn.relu)
+            y_hat = fc_block(h, 1, scope='proj_2')
+            return y_hat
+
+    def _decoder(self, x, conv_inputs, features):
+        batch_size = tf.shape(x)[0]
+        encoder_len = tf.tile(tf.expand_dims(x.get_shape()[1], 0), (batch_size,))
         # initialize state tensor arrays
         state_queues = []
         for i, (conv_input, dilation) in enumerate(zip(conv_inputs, self._dilation)):
@@ -235,7 +275,7 @@ class WaveNet(Base):
             batch_idx = tf.tile(tf.expand_dims(batch_idx, 1), (1, dilation))
             batch_idx = tf.reshape(batch_idx, [-1])
 
-            queue_begin_time = self._config.seq_len - dilation - 1
+            queue_begin_time = encoder_len - dilation - 1
             temporal_idx = tf.expand_dims(queue_begin_time, 1) + tf.expand_dims(tf.range(dilation), 0)
             temporal_idx = tf.reshape(temporal_idx, [-1])
 
@@ -259,7 +299,7 @@ class WaveNet(Base):
         time = tf.constant(0, dtype=tf.int32)
 
         # get initial x input
-        current_idx = tf.stack([tf.range(tf.shape(self._config.seq_len)[0]), self._config.seq_len - 1], axis=1)
+        current_idx = tf.stack([tf.range(tf.shape(encoder_len)[0]), encoder_len- 1], axis=1)
         initial_input = tf.gather_nd(x, current_idx)
         dilations = self._dilation
 
@@ -268,23 +308,23 @@ class WaveNet(Base):
             current_input = tf.concat([current_input, current_features], axis=1)
 
             with tf.variable_scope('decode/x_proj', reuse=True):
-                w_x_proj = tf.get_variable('weights')
-                b_x_proj = tf.get_variable('biases')
+                w_x_proj = tf.get_variable('kernel')
+                b_x_proj = tf.get_variable('bias')
                 x_proj = tf.nn.tanh(tf.matmul(current_input, w_x_proj) + b_x_proj)
 
             skip_outputs, updated_queues = [], []
             for i, (conv_input, queue, dilation) in enumerate(zip(conv_inputs, queues, dilations)):
                 state = queue.read(time)
                 with tf.variable_scope('decode/conv_{}'.format(i), reuse=True):
-                    w_conv = tf.get_variable('weights'.format(i))
-                    b_conv = tf.get_variable('biases'.format(i))
+                    w_conv = tf.get_variable('kernel'.format(i))
+                    b_conv = tf.get_variable('bias'.format(i))
                     dilated_conv = tf.matmul(state, w_conv[0, :, :]) + tf.matmul(x_proj, w_conv[1, :, :]) + b_conv
                 conv_filter, conv_gate = tf.split(dilated_conv, 2, axis=1)
                 dilated_conv = tf.nn.tanh(conv_filter) * tf.nn.sigmoid(conv_gate)
 
                 with tf.variable_scope('decode/fc_{}'.format(i), reuse=True):
-                    w_proj = tf.get_variable('weights'.format(i))
-                    b_proj = tf.get_variable('biases'.format(i))
+                    w_proj = tf.get_variable('kernel'.format(i))
+                    b_proj = tf.get_variable('bias'.format(i))
                     concat_outputs = tf.matmul(dilated_conv, w_proj) + b_proj
                 skips, residuals = tf.split(concat_outputs, [self._config.skip, self._config.res], axis=1)
 
@@ -294,13 +334,13 @@ class WaveNet(Base):
 
             skip_outputs = tf.nn.relu(tf.concat(skip_outputs, axis=1))
             with tf.variable_scope('decode/proj_1', reuse=True):
-                w_h = tf.get_variable('weights')
-                b_h = tf.get_variable('biases')
+                w_h = tf.get_variable('kernel')
+                b_h = tf.get_variable('bias')
                 h = tf.nn.relu(tf.matmul(skip_outputs, w_h) + b_h)
 
             with tf.variable_scope('decode/proj_2', reuse=True):
-                w_y = tf.get_variable('weights')
-                b_y = tf.get_variable('biases')
+                w_y = tf.get_variable('kernel')
+                b_y = tf.get_variable('bias')
                 y_hat = tf.matmul(h, w_y) + b_y
 
             elements_finished = (time >= self._config.pred_len)
@@ -336,7 +376,6 @@ class WaveNet(Base):
         outputs_ta = returned[2]
         y_hat = tf.transpose(outputs_ta.stack(), (1, 0, 2))
         return y_hat
-
 
 class NP(Base):
     def __init__(self, input_shape, config, scope='np'):
@@ -605,7 +644,7 @@ class InputAttention(Attention):
                 self._memory], axis=2)  # batch_size, input_shape, cell_size + seq_len
             x = self._memory_layer(x)
             x = tf.squeeze(x, axis=-1)
-            alpha = tf.nn.softmax(kaf(x, name='kaf') + x)
+            alpha = tf.nn.softmax(x)
             x_tilde = tf.multiply(alpha, query)
             return x_tilde
 

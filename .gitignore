@@ -1,5 +1,6 @@
 __pycache__/
 nb/.ipynb_checkpoints
+nb/img
 utils/__pycache__/
 tf/*
 .idea/
