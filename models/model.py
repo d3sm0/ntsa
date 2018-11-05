@@ -1,18 +1,37 @@
 import logging
 
 import tensorflow as tf
-
+from tensorflow_probability import distributions as tfd
 from utils.tf_utils import (summary_op, selu, clf_metrics, fc_block, sn_block, clip_grads, smape, regr_metrics,
                             conv1d)
 
-if not tf.VERSION == '1.10.1':
-    tf.logging.log(tf.logging.WARN, "You should update tensorflow to 1.10.1")
+
+def assert_shape(x, template):
+    if x.get_shape().tolist() != template:
+        raise ValueError("Tensors has different shape")
+
+
+def sequence_loss(y, y_hat, weights, loss_fn, avg_time=True, avg_batch=True):
+    loss = loss_fn(y, y_hat)
+    total_size = tf.convert_to_tensor(1e-12)
+    if avg_batch and avg_time:
+        loss = tf.reduce_sum(loss)
+        total_size += tf.reduce_sum(weights)
+    elif avg_batch and not avg_time:
+        loss = tf.reduce_sum(loss, axis=0)
+        total_size += tf.reduce_sum(loss, axis=0)
+    else:
+        loss = tf.reduce_sum(loss, axis=1)
+        total_size = tf.reduce_sum(loss, axis=1)
+
+    loss = tf.divide(loss, total_size, name=loss.name)
+    return tf.losses.add_loss(loss)
 
 
 class Base(object):
     def __init__(self, input_shapes, config, scope="model"):
         self._input_shapes = input_shapes
-        self._proj_shape = 2 if config.loss == "clf" else 1  # suppose binary classification vs regression
+        self._output_shape = input_shapes[1][-1]
         self._scope = scope
         self._config = config
         self._summary_list = []
@@ -51,34 +70,13 @@ class Base(object):
 
     def _predict_op(self):
         with tf.name_scope("predict_op"):
-            if self._config.loss == "clf":
-                self.y_hat = tf.argmax(self.h, axis=2, name='y_hat')
-            else:
-                self.y_hat = self.h * self.std + self.mu
+            self.y_hat = self.h * self.std + self.mu
 
     def _loss_op(self):
         with tf.name_scope("loss_op"):
 
-            y = self.y
-            if self._config.loss == "clf":
-                y = tf.cast(y, dtype=tf.int32)
-                y = tf.reshape(y, (-1,))
-                h = tf.reshape(self.h, (-1, self._proj_shape))
-                loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=y, logits=h)
-            else:
-                h = self.h * self.std + self.mu
-                h = tf.reshape(h, (-1, 1))
-                y = tf.reshape(y, (-1, 1))
-                if self._config.loss == "smape":
-                    loss = smape(y, h)
-                elif self._config.loss == "mae":
-                    loss = tf.abs(y - h)
-                elif self._config.loss == "mse":
-                    loss = tf.square(y - h)
-                else:
-                    raise NotImplementedError()
-
-            self.loss = tf.reduce_mean(loss, name=self._config.loss)
+            weights = tf.ones_like(self.y, name='weights')
+            self.loss = sequence_loss(self.y, self.y_hat, weights=weights, loss_fn=which_loss(self._config.loss))
 
             if hasattr(self, '_reg'):
                 reg = tf.reduce_sum(tf.add_n(self._reg, name="reg"))
@@ -96,7 +94,7 @@ class Base(object):
                 decay_steps=self._config.decay_steps,
                 power=1 - self._config.decay_rate,
             )
-            opt = tf.train.AdamOptimizer(learning_rate=lr)
+            opt = tf.train.RMSPropOptimizer(learning_rate=lr)
             gvs, norm = clip_grads(self.loss, self.vars, clip=self._config.clip)
             self.train = opt.apply_gradients(gvs, global_step=self._global_step)
             self._summary_list += [norm]
@@ -109,18 +107,13 @@ class Base(object):
             y = tf.reshape(self.y, (-1, self._config.pred_len))
             y_hat = tf.reshape(self.y_hat, (-1, self._config.pred_len))
 
-            if self._config.loss == "clf":
-                metrics = clf_metrics(y=y, y_hat=y_hat)
-            else:
-                metrics = regr_metrics(y=y, y_hat=y_hat)
+            metrics = regr_metrics(y=y, y_hat=y_hat)
 
             self.metrics = {k: tf.reduce_mean(v) for k, v in metrics.items()}
 
     def _project_output(self, h):
         if self._config.pred_len != self._config.seq_len:
             h = mask_output(h, pred_len=self._config.pred_len, seq_len=self._config.seq_len)
-        if self._config.loss == "clf":
-            h = tf.layers.dense(h, units=self._proj_shape, activation=None, name="logits", reuse=tf.AUTO_REUSE)
         return h
 
     @staticmethod
@@ -144,17 +137,11 @@ class Dense(Base):
     def __init__(self, input_shapes, config):
         super(Dense, self).__init__(input_shapes, config=config, scope="dense")
 
-        self._config = config
-
     def _init_graph(self):
-        with tf.variable_scope(self._scope):
+        with tf.variable_scope(self._scope, reuse=tf.AUTO_REUSE):
             h = self.x
-            for idx, (units, rate) in enumerate(self._config.layers):
-                h = fc_block(h, units=units, act=selu, keep_prob=self.keep_prob, init=tf.initializers.variance_scaling,
-                             scope="fc_block_{}".format(idx))
-
-            h = mask_output(h, pred_len=self._config.pred_len, seq_len=self._config.seq_len)
-            self.h = tf.layers.dense(h, units=self._proj_shape, kernel_initializer=tf.initializers.variance_scaling)
+            h = FullyConnected(config=self._config, scope=self._scope)(h)
+            self.h = self._project_output(h)
 
 
 class SeriesNet(Base):
@@ -180,9 +167,10 @@ class SeriesNet(Base):
             h = tf.nn.leaky_relu(h, alpha=0.1)
             self.h = self._project_output(h)
 
+
 class WaveNet(Base):
     def __init__(self, input_shapes, config, scope="wavenet"):
-        super(WaveNet, self).__init__(input_shapes, config=config,scope=scope)
+        super(WaveNet, self).__init__(input_shapes, config=config, scope=scope)
 
         self._dilation = [2 ** idx for idx in range(self._config.d_rate)] * self._config.layers
         self._kernel = [self._config.kernel_size for idx in range(self._config.d_rate)] * self._config.layers
@@ -190,7 +178,7 @@ class WaveNet(Base):
     def _init_graph(self):
         # x and x_features
         x = self.x[:, :, :1]
-        x_features = self.x[:,:, 1:]
+        x_features = self.x[:, :, 1:]
         y_features = self.y_features
 
         with tf.variable_scope(self._scope):
@@ -208,7 +196,7 @@ class WaveNet(Base):
             conv_inputs = [x]
             for i, (dilation, filter_width) in enumerate(zip(self._dilation, self._kernel)):
                 h = conv1d(x, 2 * self._config.res, kernel_size=filter_width, dilation_rate=dilation,
-                              scope='conv_{}'.format(i))
+                           scope='conv_{}'.format(i))
 
                 f, g = tf.split(h, 2, axis=2)
                 g = tf.nn.tanh(f) * tf.nn.sigmoid(g)
@@ -227,8 +215,7 @@ class WaveNet(Base):
             return y_hat, conv_inputs[:-1]
 
     def _decode(self, x, scope='decode'):
-        with tf.variable_scope(scope,reuse=tf.AUTO_REUSE):
-
+        with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
             inputs = fc_block(
                 x,
                 units=self._config.res,
@@ -299,7 +286,7 @@ class WaveNet(Base):
         time = tf.constant(0, dtype=tf.int32)
 
         # get initial x input
-        current_idx = tf.stack([tf.range(tf.shape(encoder_len)[0]), encoder_len- 1], axis=1)
+        current_idx = tf.stack([tf.range(tf.shape(encoder_len)[0]), encoder_len - 1], axis=1)
         initial_input = tf.gather_nd(x, current_idx)
         dilations = self._dilation
 
@@ -377,78 +364,347 @@ class WaveNet(Base):
         y_hat = tf.transpose(outputs_ta.stack(), (1, 0, 2))
         return y_hat
 
+
+class CNP(Base):
+    """The CNP model."""
+
+    def __init__(self, input_shapes, config, scope="cnp"):
+        super(CNP, self).__init__(input_shapes, config, scope)
+
+    def _init_graph(self):
+        context_point = tf.random_uniform(shape=(self._config.context_points,), minval=3, maxval=self._config.seq_len)
+
+        x = self.x[:, :, 1:]
+        y = self.x[:, :, 1:]
+
+        c_x = tf.gather(x, indices=context_point, axis=1)
+        c_y = tf.gather(y, indices=context_point, axis=1)
+
+        r = NeuralEncoder(self._config)(c_x, c_y)
+        self.h, self.sigma = NeuralDecoder(self._config)(r, x)
+
+    def _loss_op(self):
+        dist = tf.contrib.distributions.MultivariateNormalDiag(
+            loc=self.h, scale_diag=self.sigma)
+
+        self.loss = tf.reduce_mean(-dist.log_prob(self.y))
+
+
 class NP(Base):
     def __init__(self, input_shape, config, scope='np'):
         super(NP, self).__init__(input_shape, config, scope=scope)
-        self._config.dist = "bernoulli" if self._config.loss == "clf" else "normal"
+        # self._config.dist = "bernoulli" if self._config.loss == "clf" else "normal"
 
     def _init_graph(self):
         with tf.variable_scope(self._scope):
-            x = self.x
-            y = self.y
-            y = (y - self.mu) / self.std
+            context_point = tf.random_uniform(shape=(self._config.context_points,), minval=3,
+                                              maxval=self._config.seq_len)
 
-            batch_size = tf.shape(x)[0]
-            # there is a better way to sample
-            c = tf.distributions.Uniform(1., tf.cast(batch_size, dtype=tf.float32)).sample()
-            c = tf.cast(c, dtype=tf.int32)
-            s = (tf.range(0, batch_size, 1) < c)
+            x = self.x[:, :, 1:]
+            y = self.x[:, :, :1]
 
-            x_context, x_target = mask_tensor(x, s)
-            y_context, y_target = mask_tensor(y, s)
+            c_x = tf.gather(x, indices=context_point, axis=1)
+            c_y = tf.gather(y, indices=context_point, axis=1)
 
-            with tf.variable_scope("encoder", reuse=tf.AUTO_REUSE):
-                r = map_xr(x, y, units=self._config.encoder, output_shape=self._config.embedding,
-                           h_dim=self._config.h_dim)
-                z_all = get_z(r, z=self._config.latent)
+            r = NeuralEncoder(self._config)(c_x, c_y)
+            self.c_z = get_z(r, 1)
+            self.z = NeuralEncoder(self._config)(x, y)
+            r = self.c_z.sample(1)
 
-                r = map_xr(x_context, y_context, units=self._config.encoder, output_shape=self._config.embedding,
-                           h_dim=self._config.h_dim)
-                z_context = get_z(r, z=self._config.latent)
-
-                q = get_dist(z_all, dist=self._config.dist)
-                p = get_dist(z_context, dist=self._config.dist)
-                self.z_sample = q.sample(sample_shape=self._config.samples)
-
-            with tf.variable_scope("decoder", reuse=tf.AUTO_REUSE):
-                g = map_zx(self.z_sample, x_target, units=self._config.decoder)
-                g = self._project_output(g)
-                z_hat = get_z(g, self._proj_shape, dist=self._config.dist)
-                d = get_dist(z_hat, dist=self._config.dist)
-
-            with tf.variable_scope("loss"):
-                kl = tf.reduce_sum(q.kl_divergence(p))
-                log_lik = tf.reduce_mean(tf.reduce_sum(d.log_prob(y_target), axis=0))
-                self.loss = -log_lik + kl
-                self._reg = kl
-                self._summary_list += [log_lik, kl]
+            self.d = NeuralDecoder(self._config)(r, x)
 
     def _loss_op(self):
-        # Loss computation are carried in init graph
-        pass
+        kl = tf.reduce_sum(self.z.kl_divergence(self.c_z))
+        log_lik = tf.reduce_mean(-self.d.log_prop(self.y))
+        self.loss = log_lik + kl
 
-    def _predict_op(self):
+
+# tf.layers.Dense
+# Learner/ Architecture/ Model/ Units
+
+
+def build_cell(config):
+    Cell = tf.nn.rnn_cell.LSTMCell if config.layers.cell == "lstm" else tf.nn.rnn_cell.GRUCell
+    cells = []
+    for layer, units in enumerate(config.layers):
+        cell = Cell()
+        if config.dropout is not None:
+            cell = tf.nn.rnn_cell.DropoutWrapper(cell)
+        cells.append(cell)
+
+    if len(config.layers) > 1:
+        cell = tf.nn.rnn_cell.MultiRNNCell(cells)
+
+    return cell
+
+
+# kernel init, func activation, cell type, dropout
+class RNN(Base):
+    def __init__(self, input_shapes, config, scope="rnn"):
+        super(RNN, self).__init__(input_shapes, config=config, scope=scope)
+
+    def _init_graph(self):
         with tf.variable_scope(self._scope):
-            # x is current value
-            # y is the estimate
-            x = self.x  # assuming y_features is like x but lagged of 12 values
-            y = self.x[:, -1:, :1]
-            y = tf.tile(y, (1, self.x.get_shape()[1], 1))
-            x_target = self.x
+            encoder_output, encoder_state, states = Recurrent(output_shape=self._output_shape,
+                                                              config=self._config)(self.x)
+            self.h = self._project_output(encoder_output)
+        self._reg = self._reg_op([states], self._config.alpha, self._config.beta)
 
-            with tf.variable_scope('encoder', reuse=tf.AUTO_REUSE):
-                # i need x,y to sample the latent factor
-                h = map_xr(x, y, units=self._config.encoder, output_shape=self._config.embedding,
-                           h_dim=self._config.h_dim)
-                z_all = get_z(h, z=self._config.latent)
-                z_sample = get_dist(z_all, dist=self._config.dist).sample(self._config.samples)
-            with tf.variable_scope('decoder', reuse=tf.AUTO_REUSE):
-                g = map_zx(z_sample, x_target, units=self._config.decoder)
-                g = self._project_output(g)
-                z_hat = get_z(g, self._proj_shape, dist=self._config.dist)
-                self.y_hat = z_hat[0] * self.std + self.mu
-                self.h = z_hat[0]
-                self.sigma = z_hat[1]
+    @staticmethod
+    def _reg_op(tensors, alpha=0., beta=0.):
+        return [(activation_loss(t, alpha), stability_loss(t, beta)) for t in tensors]
+
+
+class Seq2Seq(RNN):
+    def __init__(self, input_shapes, config, scope="seq2seq"):
+        super(Seq2Seq, self).__init__(input_shapes, config=config, scope=scope)
+
+    def _init_graph(self):
+        with tf.variable_scope(self._scope):
+            encoder_output, encoder_state, encoder_states = Recurrent(output_shape=self._output_shape,
+                                                                      config=self._config)(self.x)
+            # decoder takes last_x as initial value, make sure the main feature in the first column
+            decoder_output, decoder_state, decoder_states = RecurrentDecoder(output_shape=self._output_shape,
+                                                                             config=self._config)(self.y_features,
+                                                                                                  self.x[:, -1, :1],
+                                                                                                  encoder_states)
+            self.h = self._project_output(decoder_output)
+
+        self._reg = RNN._reg_op([encoder_states, decoder_states], alpha=self._config.alpha, beta=self._config.beta)
+
+
+class DARNN(Seq2Seq):
+    def __init__(self, input_shapes, config):
+        super(DARNN, self).__init__(input_shapes,
+                                    config=config,
+                                    scope="darnn")
+        self._config = config
+
+
+class Attention(object):
+    def __init__(self, output_shape=None, memory=None, use_bias=True, name='attention'):
+        self._memory = memory
+        self._name = name
+        self._output_shape = output_shape
+        self._project = self.projection_layer(output_shape, use_bias=use_bias) if output_shape is not None else lambda \
+                x: x
+
+    def apply(self, query, state):
+        return query
+
+    def project(self, state):
+        return self._project(state)
+
+    @staticmethod
+    def projection_layer(output_shape, use_bias=True):
+        with tf.variable_scope("proj_layer"):
+            h = tf.layers.Dense(units=output_shape, use_bias=use_bias, name='fc',
+                                kernel_initializer=tf.variance_scaling_initializer)
+            return h
+
+
+class InputAttention(Attention):
+
+    def __init__(self,
+                 output_shape,
+                 memory,
+                 name='input_attention',
+                 use_bias=False):
+        super(InputAttention, self).__init__(
+            output_shape=output_shape,
+            memory=tf.transpose(memory, (0, 2, 1)),
+            name=name,
+        )
+
+        self._memory_layer = tf.layers.Dense(units=1, use_bias=use_bias, name='memory', _reuse=tf.AUTO_REUSE)
+        self._input_shape = memory.get_shape()[-1]
+
+    def apply(self, query, state):
+        with tf.variable_scope(self._name, values=[query]):
+            x = tf.concat([
+                tf.tile(tf.expand_dims(state, axis=1), (1, self._input_shape, 1)),
+                self._memory], axis=2)  # batch_size, input_shape, cell_size + seq_len
+            x = self._memory_layer(x)
+            x = tf.squeeze(x, axis=-1)
+            alpha = tf.nn.softmax(x)
+            x_tilde = tf.multiply(alpha, query)
+            return x_tilde
+
+
+class TimeAttention(Attention):
+
+    def __init__(self, input_shape, output_shape, memory, name='time_attention', use_bias=False):
+        super(TimeAttention, self).__init__(output_shape=output_shape,
+                                            memory=memory,
+                                            use_bias=True,
+                                            name=name)
+        self._input_shape = input_shape
+        self._memory_layer = self.memory_layer(input_shape, use_bias=use_bias)
+        self._query_layer = tf.layers.Dense(units=1, use_bias=use_bias, name='query_layer',
+                                            kernel_initializer=tf.variance_scaling_initializer)
+
+    def apply(self, query, state):
+        # batch_size, seq_len, encoder + decoder_state
+        context = self.context(state)
+        y_tilde = self._query_layer(tf.concat([query, context], axis=1))
+        return y_tilde
+
+    def context(self, state):
+        # none, 25, 64
+        x = tf.concat([
+            tf.tile(tf.expand_dims(state, axis=1), (1, self._input_shape, 1)),
+            self._memory], axis=2)
+        beta = self._memory_layer(x)  # None, 25
+        context = tf.matmul(tf.expand_dims(tf.squeeze(beta, axis=-1), axis=1), self._memory)[:, 0, :]  # None, cell_size
+        return context
+
+    @staticmethod
+    def memory_layer(input_shape, use_bias=False):
+        with tf.variable_scope('beta', reuse=tf.AUTO_REUSE, initializer=tf.initializers.variance_scaling):
+            fc_0 = tf.layers.Dense(units=input_shape, use_bias=use_bias, activation=tf.nn.tanh, name='fc_0')
+            fc_1 = tf.layers.Dense(units=1, use_bias=use_bias, activation=tf.nn.softmax, name='fc_1')
+        return lambda x: fc_1(fc_0(x))
+
+
+class Block(object):
+    def __init__(self, config, scope="block"):
+        self._built = False
+        self._config = config
+        self._scope = scope
+        self._vars = []
+        self._endpoints = {}  # all the outputs of the model
+        self._output_shape = config.layers[-1]
+
+    def __call__(self, x, *args, **kwargs):
+        with tf.variable_scope(self._scope, reuse=tf.AUTO_REUSE):
+            if not self._built:
+                self.build()
+            out = self.call(x, *args, **kwargs)
+            return out
+
+    def call(self, *args, **kwargs):
+        raise NotImplementedError("Must be implemented locally")
+
+    def build(self):
+        self._built = True
+
+    @property
+    def scope(self):
+        return self._scope
+
+    @property
+    def config(self):
+        return self._config
+
+    @property
+    def vars(self):
+        return self._vars
+
+
+class FullyConnected(Block):
+    def __init__(self, config, scope="dense_block"):
+        super(FullyConnected, self).__init__(config, scope)
+
+    def call(self, x):
+        h = x
+        for layer, unit in enumerate(self.config.layers):
+            h = tf.layers.dense(x, units=unit, activation=self.config.act, kernel_initializer=self.config.kernel_init,
+                                name=f'fc_"{layer}"')
+        return h
+
+
+class Conv1D(Block):
+    def __init__(self, config, scope="conv_block"):
+        super(Conv1D, self).__init__(config, scope)
+
+    def call(self, x):
+        h = x
+        for layer, filters, kernel_size in enumerate(self.config.layers):
+            h = conv1d(h, filters, kernel_size, scope=f'conv_"{layer}"')
+        return h
+
+
+class Recurrent(Block):
+    def __init__(self, output_shape, config, scope="recurrent_encoder"):
+        # unit Recurrent, encode(h)
+        super(Recurrent, self).__init__(config, scope)
+        self._output_shape = output_shape
+        self._cell = build_cell(config)
+
+    def call(self, x):
+        attn = InputAttention(output_shape=self._output_shape, memory=x) if self._config.attn else Attention(
+            output_shape=self._output_shape)
+        init_state = self._cell.zero_state(batch_size=tf.shape(x), dtype=tf.float32)
+        output, state, states = encode(x, self._cell, encoder_state=init_state, time_first=True, attn=attn,
+                                       seq_len=self._config.seq_len)
+        return output, state, states
+
+
+class RecurrentEncoder(Recurrent):
+    def __init__(self, output_shape, config, scope="recurrent_encoder"):
+        # unit Recurrent, encode(h)
+        super(RecurrentEncoder, self).__init__(output_shape, config, scope)
+
+
+class RecurrentDecoder(Block):
+    def __init__(self, output_shape, config, scope="recurrent_decoder"):
+        # unit Recurrent, encode(h)
+        super(RecurrentDecoder, self).__init__(config, scope)
+        self._output_shape = output_shape
+        self._cell = build_cell(config)
+
+    def call(self, inputs):
+        x, last_y, encoder_states = inputs
+        attn = TimeAttention(input_shape=x.get_shape()[-1],
+                             output_shape=self._output_shape,
+                             memory=encoder_states) if self._config.attn else Attention(
+            output_shape=self._output_shape)
+
+        init_state = self._cell.zero_state(batch_size=tf.shape(x), dtype=tf.float32)
+
+        output, state, states = decode(x, last_y, self._cell, decoder_state=init_state, attn=attn,
+                                       seq_len=self._config.seq_len)
+        return output, state, states
+
+
+class NeuralEncoder(Block):
+    def __init__(self, config, scope="neural_encoder"):
+        super(NeuralEncoder, self).__init__(config, scope)
+
+    def call(self, x, y):
+        h = tf.concat([x, y], axis=2)
+        for layer, unit in enumerate(self.config.layers):
+            h = tf.layers.dense(x, units=unit, activation=self.config.act,
+                                kernel_initializer=self.config.kernel_init,
+                                name=f'fc_"{layer}"')
+
+        h = tf.reduce_mean(h, axis=1)
+        return h
+
+
+class NeuralDecoder(Block):
+    def __init__(self, config, scope="neural_decoder"):
+        super(NeuralDecoder, self).__init__(config, scope)
+
+    def call(self, r, x):
+        seq_len = x.get_shape().as_list()[1]
+        r = tf.tile(
+            tf.expand_dims(r, axis=1), [1, seq_len, 1])
+
+        h = tf.concat([r, x], axis=2)
+
+        for layer, unit in enumerate(self.config.layers):
+            h = tf.layers.dense(x, units=unit, activation=self.config.act,
+                                kernel_initializer=self.config.kernel_init,
+                                name=f'fc_"{layer}"')
+
+        return get_z(h, latent_shape=2)
+
+        # mu, log_sigma = tf.split(h, 2, axis=-1)
+        #
+        # # Bound the variance
+        # sigma = 0.1 + 0.9 * tf.nn.softplus(log_sigma)
+        # return mu, sigma
 
 
 def map_xr(x, y, units, output_shape, h_dim=3):
@@ -491,196 +747,11 @@ def map_zx(z, x_target, units):
     return h
 
 
-def get_z(r, z, dist="normal"):
-    if dist == "normal":
-        mu = tf.layers.dense(r, z, name='mu', reuse=tf.AUTO_REUSE)
-        sigma = tf.layers.dense(r, z, name='std', reuse=tf.AUTO_REUSE, activation=tf.nn.softplus)
-        return (mu, sigma)
-    elif dist == "bernoulli":
-        mu = tf.layers.dense(r, z, name='mu', reuse=tf.AUTO_REUSE)
-        return (mu,)
-    else:
-        raise NotImplementedError()
-
-
-class RNN(Base):
-    def __init__(self, input_shapes, config, scope="rnn"):
-
-        super(RNN, self).__init__(input_shapes, config=config, scope=scope)
-
-    def _init_graph(self):
-        if self._config.loss == "clf" and self._config.ar is True:
-            raise ValueError("Can't use classification loss with autoregressive model, change to mae.")
-
-        with tf.variable_scope(self._scope):
-            h = self.x
-            encoder_output, encoder_state, states = self._encoder(h)
-            self.h = self._project_output(encoder_output)
-        self._reg = self._reg_op([states], self._config.alpha, self._config.beta)
-
-    def _encoder(self, h, encoder_state=None):
-
-        with tf.variable_scope('encoder'):
-            cell = tf.contrib.rnn.GRUBlockCellV2(num_units=self._config.encoder)
-
-            cell = tf.nn.rnn_cell.DropoutWrapper(cell, output_keep_prob=self.keep_prob,
-                                                 state_keep_prob=self.keep_prob)
-            if not encoder_state:
-                encoder_state = cell.zero_state(batch_size=tf.shape(h)[0], dtype=tf.float32)
-
-            if self._config.attn:
-                attn = InputAttention(output_shape=self._proj_shape, memory=h, use_bias=True,
-                                      project_output=True)
-            else:
-                attn = Attention(output_shape=self._proj_shape, use_bias=True,
-                                 project_output=True)
-
-            encoder_output, encoder_state, states = encode(h, cell, encoder_state=encoder_state,
-                                                           seq_len=self._config.seq_len, time_first=False,
-                                                           attn=attn)
-            encoder_output.set_shape((None, self._config.seq_len, encoder_output.get_shape()[-1]))
-        return encoder_output, encoder_state, states
-
-    @staticmethod
-    def _reg_op(tensors, alpha=0., beta=0.):
-        return [(activation_loss(t, alpha), stability_loss(t, beta)) for t in tensors]
-
-
-class Seq2Seq(RNN):
-    def __init__(self, input_shapes, config, scope="seq2seq"):
-        super(Seq2Seq, self).__init__(input_shapes, config=config, scope=scope)
-
-    def _decoder(self, h, last_y, decoder_state=None, states=None):
-        with tf.variable_scope('decoder'):
-            cell = tf.contrib.rnn.GRUBlockCellV2(num_units=self._config.decoder)
-            cell = tf.nn.rnn_cell.DropoutWrapper(cell, output_keep_prob=self.keep_prob,
-                                                 state_keep_prob=self.keep_prob)
-            if decoder_state is None:
-                decoder_state = cell.zero_state(batch_size=tf.shape(h)[0], dtype=tf.float32)
-
-            if self._config.attn and states is not None:
-                attn = TimeAttention(input_shape=self._config.seq_len, output_shape=self._proj_shape,
-                                     memory=states)
-            else:
-                attn = Attention(output_shape=self._proj_shape, project_output=True)
-
-            decoder_output, decoder_state, decoder_states = decode(cell,
-                                                                   last_y=last_y,
-                                                                   h=h,
-                                                                   decoder_state=decoder_state,
-                                                                   seq_len=self._config.pred_len,
-                                                                   attn=attn)
-            return decoder_output, decoder_state, decoder_states
-
-    def _init_graph(self):
-        with tf.variable_scope(self._scope):
-            h = self.x
-            h, last_state, encoder_states = self._encoder(h)
-            # decoder takes last_x as initial value, make sure the main feature in the first column
-            out, last_state, decoder_states = self._decoder(self.y_features,
-                                                            self.x[:, -1, :1], decoder_state=last_state,
-                                                            states=encoder_states)
-
-            self.h = self._project_output(out)
-
-        self._reg = RNN._reg_op([encoder_states, decoder_states], alpha=self._config.alpha, beta=self._config.beta)
-
-
-class DARNN(Seq2Seq):
-    def __init__(self, input_shapes, config):
-        super(DARNN, self).__init__(input_shapes,
-                                    config=config,
-                                    scope="darnn")
-        self._config = config
-
-
-class Attention(object):
-    def __init__(self, output_shape=1, memory=None, scale=False, use_bias=True, project_output=False,
-                 name='attention'):
-        self._memory = memory
-        self._scale = scale
-        self._name = name
-        self._output_shape = output_shape
-        self._project = self.projection_layer(output_shape, use_bias=use_bias) if project_output else lambda x: x
-
-    def apply(self, query, state):
-        return query
-
-    def project(self, state):
-        return self._project(state)
-
-    @staticmethod
-    def projection_layer(output_shape, use_bias=True):
-        with tf.variable_scope("proj_layer"):
-            h = tf.layers.Dense(units=output_shape, use_bias=use_bias, name='fc',
-                                kernel_initializer=tf.variance_scaling_initializer)
-            return h
-
-
-class InputAttention(Attention):
-
-    def __init__(self,
-                 output_shape,
-                 memory,
-                 scale=False,
-                 name='input_attention',
-                 use_bias=False,
-                 project_output=False):
-        super(InputAttention, self).__init__(
-            output_shape=output_shape,
-            memory=tf.transpose(memory, (0, 2, 1)),
-            name=name,
-            scale=scale,
-            project_output=project_output
-        )
-
-        self._memory_layer = tf.layers.Dense(units=1, use_bias=use_bias, name='memory', _reuse=tf.AUTO_REUSE)
-        self._input_shape = memory.get_shape()[-1]
-
-    def apply(self, query, state):
-        with tf.variable_scope(self._name, values=[query]):
-            x = tf.concat([
-                tf.tile(tf.expand_dims(state, axis=1), (1, self._input_shape, 1)),
-                self._memory], axis=2)  # batch_size, input_shape, cell_size + seq_len
-            x = self._memory_layer(x)
-            x = tf.squeeze(x, axis=-1)
-            alpha = tf.nn.softmax(x)
-            x_tilde = tf.multiply(alpha, query)
-            return x_tilde
-
-
-class TimeAttention(Attention):
-
-    def __init__(self, input_shape, output_shape, memory, scale=False, name='time_attention', use_bias=False):
-        super(TimeAttention, self).__init__(output_shape, memory, scale=scale, name=name, project_output=True,
-                                            use_bias=True)
-        self._input_shape = input_shape
-        self._memory_layer = self.memory_layer(input_shape, use_bias=use_bias)
-        self._query_layer = tf.layers.Dense(units=1, use_bias=use_bias, name='query_layer',
-                                            kernel_initializer=tf.variance_scaling_initializer)
-
-    def apply(self, query, state):
-        # batch_size, seq_len, encoder + decoder_state
-        context = self.context(state)
-        y_tilde = self._query_layer(tf.concat([query, context], axis=1))
-        return y_tilde
-
-    def context(self, state):
-        # none, 25, 64
-        x = tf.concat([
-            tf.tile(tf.expand_dims(state, axis=1), (1, self._input_shape, 1)),
-            self._memory], axis=2)
-        beta = self._memory_layer(x)  # None, 25
-        context = tf.matmul(tf.expand_dims(tf.squeeze(beta, axis=-1), axis=1), self._memory)[:, 0, :]  # None, cell_size
-        return context
-
-    @staticmethod
-    def memory_layer(input_shape, use_bias=False):
-        with tf.variable_scope('beta', reuse=tf.AUTO_REUSE, initializer=tf.initializers.variance_scaling):
-            fc_0 = tf.layers.Dense(units=input_shape, use_bias=use_bias, activation=tf.nn.tanh, name='fc_0')
-            fc_1 = tf.layers.Dense(units=1, use_bias=use_bias, activation=tf.nn.softmax, name='fc_1')
-        return lambda x: fc_1(fc_0(x))
-
+def get_z(h, latent_shape, dist="normal"):
+    h = tf.layers.dense(h, latent_shape * 2, name='mu', activation=None)
+    mu, log_sigma = tf.split(h, 2, axis=-1)
+    sigma = 0.1 + 0.9 * tf.nn.softplus(log_sigma)
+    return tfd.MultivariateNormalDiag(mu, sigma)
 
 def encode(h, cell, encoder_state=None, seq_len=24, time_first=False, attn=None):
     def cond_stop(time, prev_state, output, states):
@@ -702,20 +773,21 @@ def encode(h, cell, encoder_state=None, seq_len=24, time_first=False, attn=None)
     _, state, output, states = tf.while_loop(cond_stop, loop_fn, init_cond, parallel_iterations=32)
     output = output.stack()
     states = states.stack()
-    if not time_first:
-        output = tf.transpose(output, (1, 0, 2))
-        states = tf.transpose(states, (1, 0, 2))
+    # if not time_first:
+    #     output = tf.transpose(output, (1, 0, 2))
+    #     states = tf.transpose(states, (1, 0, 2))
+
+    output.set_shape((None, seq_len, output.get_shape()[-1]))
 
     return output, state, states
 
 
-def decode(cell, last_y, h=None, decoder_state=None, seq_len=24, time_first=False, attn=None):
+def decode(h, last_y, cell, decoder_state=None, seq_len=24, time_first=False, attn=None):
     def cond_stop(time, prev_output, prev_state, output, states):
         return time < seq_len
 
     def loop_fn(time, prev_output, prev_state, output, states):
         y_tilde = attn.apply(tf.concat([prev_output, h[:, time, :]], axis=1), prev_state)
-        # y_tilde = attn.apply(prev_output, prev_state)
         out, state = cell(y_tilde, prev_state)
         out = attn.project(out)
         output = output.write(time, out)
@@ -731,9 +803,11 @@ def decode(cell, last_y, h=None, decoder_state=None, seq_len=24, time_first=Fals
     _, _, state, output, states = tf.while_loop(cond_stop, loop_fn, init_cond, parallel_iterations=32)
     output = output.stack()
     states = states.stack()
-    if not time_first:
-        output = tf.transpose(output, (1, 0, 2))
-        states = tf.transpose(states, (1, 0, 2))
+    # if not time_first:
+    #     output = tf.transpose(output, (1, 0, 2))
+    #     states = tf.transpose(states, (1, 0, 2))
+
+    output.set_shape((None, seq_len, output.get_shape()[-1]))
     return output, state, states
 
 
@@ -750,15 +824,6 @@ def stability_loss(h, beta):
     else:
         l2 = tf.sqrt(tf.reduce_sum(tf.square(h), axis=-1))
         return beta * tf.reduce_mean(tf.square(l2[1:] - l2[:-1]))
-
-
-def get_dist(params, dist="normal"):
-    if dist == "normal":
-        return tf.distributions.Normal(*params)
-    elif dist == "bernoulli":
-        return tf.distributions.Bernoulli(logits=params[0], dtype=tf.float32)
-    else:
-        raise NotImplementedError()
 
 
 def mask_tensor(x, s):
