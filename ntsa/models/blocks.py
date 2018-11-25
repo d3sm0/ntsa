@@ -3,7 +3,7 @@
 
 import gin.tf.external_configurables
 
-from utils.tf_utils import fc_block, conv1d_block, rnn_block, get_z, tf
+from utils.tf_utils import fc_block, conv1d_block, rnn_block, get_z, tf, Kaf
 
 
 class Block(object):
@@ -214,20 +214,26 @@ class Attention(object):
             return h
 
 
+@gin.configurable
 class InputAttention(Attention):
 
     def __init__(self,
                  output_shape,
                  memory,
                  name='input_attention',
-                 use_bias=False):
+                 use_bias=False,
+                 alpha=0):
         super(InputAttention, self).__init__(
             output_shape=output_shape,
             memory=tf.transpose(memory, (0, 2, 1)),
             name=name,
         )
-
-        self._memory_layer = tf.layers.Dense(units=1, use_bias=use_bias, name='memory', _reuse=tf.AUTO_REUSE)
+        if alpha:
+            k = Kaf(input_shape=alpha)
+            self._act = lambda x: tf.nn.softmax(k(x) + x)
+        else:
+            self._act = tf.nn.softmax
+        self._memory_layer = tf.layers.Dense(units=1, use_bias=use_bias, name='memory', activation=None)
         self._input_shape = memory.get_shape()[-1]
 
     def apply(self, query, state, t):
@@ -235,9 +241,9 @@ class InputAttention(Attention):
         x = tf.concat([tf.tile(tf.expand_dims(state, axis=1), (1, self._input_shape, 1)), self._memory], axis=2)
         x = self._memory_layer(x)
         x = tf.squeeze(x, axis=2)
-        alpha = tf.nn.softmax(x)
+        alpha = self._act(x)
         x_tilde = tf.multiply(alpha, query)
-        return x_tilde
+        return x_tilde, state
 
 
 class TimeAttention(Attention):
@@ -302,7 +308,7 @@ class AlignedAttention(Attention):
         c = tf.reduce_sum(w * self._memory, 1)
         s_tilde = self._query_layer(tf.concat([state, c], axis=1))
 
-        query = tf.concat([self._y_features[:, t,:], query], axis=-1)
+        query = tf.concat([self._y_features[:, t, :], query], axis=-1)
         return query, s_tilde
 
 
@@ -333,8 +339,9 @@ def encode(h, cell, encoder_state=None, seq_len=24, time_first=False, attn=None)
 
     output.set_shape((None, seq_len, output.get_shape()[-1]))
     states.set_shape((None, seq_len, output.get_shape()[-1]))
-#
+    #
     return output, state, states
+
 
 def decode(last_y, cell, decoder_state=None, seq_len=24, time_first=False, attn=None):
     def cond_stop(time, prev_output, prev_state, output, states):

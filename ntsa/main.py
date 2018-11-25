@@ -2,6 +2,7 @@ import argparse
 import inspect
 import logging
 import sys
+import os
 import models
 from dataset import build_train_test_datasets
 from train import (Trainer, Runner, AdversarialRunner)
@@ -26,6 +27,9 @@ def main(config):
         if config.restore_path is not None:
             config.__dict__.update(**Logger.load(config.restore_path))
             config.mode = mode
+
+    if config.gpu:
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(config.gpu)
 
     Model = select_model(config.model)
     logger = Logger(config=config.__dict__.copy())
@@ -65,9 +69,9 @@ def main(config):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train Model")
-    parser.add_argument('--model', type=str, default="dense", help='Model name in base path')
-    parser.add_argument('--mode', type=str, default="predict", help='Mode: train, test, predict.')
-    parser.add_argument('--loss', type=str, default="sdtw", help='Loss type. "clf","smape", mae ')
+    parser.add_argument('--model', type=str, default="seq2seq", help='Model name in base path')
+    parser.add_argument('--mode', type=str, default="train", help='Mode: train, test, predict.')
+    parser.add_argument('--loss', type=str, default="smape", help='Loss type. "clf","smape", mae ')
     parser.add_argument('--dataset_path', type=str, default="../data/benchmark/sm1_2010.csv", help='Data path')
     parser.add_argument('--restore_path', type=str, default=None, help='Base path')
     parser.add_argument('--note', type=str, default=None, help='Some description of the experiment')
@@ -77,6 +81,8 @@ if __name__ == "__main__":
     parser.add_argument('--pred_len', type=int, default=24, help='Size of the prediction')
     parser.add_argument('--seq_len', type=int, default=24, help='Size of the history')
     parser.add_argument('--window', type=int, default=24, help='Size of the iteration window')
+    parser.add_argument("--gpu", default=1, type=int, help="Number of gpus.")
+    parser.add_argument("--gpu_ratio", default=1.,type=int, help="percentage of the GPU memory to allocate to the experiment")
 
     console_args = parser.parse_args()
     config = get_config(console_args)

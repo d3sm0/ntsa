@@ -281,7 +281,7 @@ class Seq2Seq(RNN):
     def _build_op(self):
         h = tf.layers.dense(self.x, units=128)
 
-        encoder = RecurrentEncoder(output_shape=None, scope="encoder", attn=False)
+        encoder = RecurrentEncoder(output_shape=None, scope="encoder", attn=self._attn)
         encoder_output, encoder_state, encoder_states = encoder(h, keep_prob=self.keep_prob)
 
         decoder = RecurrentDecoder(output_shape=self._output_shape, seq_len=self._pred_len, attn=self._attn, scope="decoder")

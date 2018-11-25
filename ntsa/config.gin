@@ -44,6 +44,8 @@ CNP.cp = 12
 CNP.sample_cp = False
 NP.z_samples = 1
 
-Seq2Seq.attn = 'time'
+Seq2Seq.attn = 'input'
 CGAN.d_lr = 0.1
 CGAN.g_lr = 0.001
+
+InputAttention.alpha = 128

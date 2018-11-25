@@ -49,8 +49,8 @@ class Trainer(object):
 
         return feed_dict
 
-    def init_sess(self):
-        self.sess, self.saver, self.train_writer = init_sess(var_list=self._vars, path=self._log_path + "/train")
+    def init_sess(self, ratio=1.):
+        self.sess, self.saver, self.train_writer = init_sess(var_list=self._vars, path=self._log_path + "/train", ratio=ratio)
 
     # self.test_writer = tf.summary.FileWriter(logdir=self._log_path + '/test')
     # self.ep_summary = tf.summary.Summary()

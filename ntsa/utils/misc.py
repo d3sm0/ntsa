@@ -16,7 +16,7 @@ logger.setLevel(logging.WARN)
 def get_config(parsed_args):
     import gin.tf.external_configurables
 
-    gin.parse_config_file('../config.gin')
+    gin.parse_config_file('config.gin')
 
     return parsed_args
 

@@ -12,4 +12,9 @@ run:
 	docker-compose -f docker/docker-compose.yml up -d ntsa
 	docker exec -it ntsa bash
 
-.PHONY: docker dev run
+build:
+	git clone https://github.com/mblondel/soft-dtw.git
+	cd soft-dtw && make cython && python setup.py build install
+	rm -rf soft-dtw
+
+.PHONY: docker dev run build
