@@ -1,0 +1,49 @@
+## Config
+
+set_seed.seed = 30
+
+conv1d.padding = "causal"
+fc_block.layers = (128,128)
+conv1d_block.layers = ((12,4,1), (12,4,1), (12,4,1))
+
+rnn_block.layers = (128,)
+rnn_block.cell_type = "gru"
+rnn_block.use_residual = True
+
+clip_grads.clip = 20.
+batch_norm.decay_rate = 0.997
+batch_norm.eps = 1e-5
+
+activation_loss.beta = 1e-6
+stability_loss.beta = 1e-6
+
+sdtw_loss.gamma = 0.1
+smape.eps = 0.1
+
+sequence_loss.avg_time = True
+sequence_loss.avg_batch = True
+
+train_fn.lr = 1e-4
+train_fn.decay_steps = 1e10
+train_fn.decay_rate = 0.7
+
+Logger.base_path = "../logs"
+
+train_test_split.test_mode = "daily"
+train_test_split.split = .8
+
+Runner.summarize_every= 1000
+Runner.test_every= 1000
+Runner.save_every= 10000
+Runner.report_every= 5000
+
+AdversarialRunner.g_steps= 10
+AdversarialRunner.d_steps= 10
+
+CNP.cp = 12
+CNP.sample_cp = False
+NP.z_samples = 1
+
+Seq2Seq.attn = 'time'
+CGAN.d_lr = 0.1
+CGAN.g_lr = 0.001

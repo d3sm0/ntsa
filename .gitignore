@@ -3,5 +3,8 @@ nb/.ipynb_checkpoints
 nb/img
 utils/__pycache__/
 tf/*
+logs/
+data/
+trash.py
 .idea/
 .DS_Store
