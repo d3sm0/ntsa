@@ -70,25 +70,27 @@ def make_features(df, seq_len=24, **kwargs):
         df.fillna(method='bfill', inplace=True)
 
     idxs = {
-        'x': df.index[:-seq_len].tolist(),
-        'y': df.index[seq_len:].tolist()
+        'x': df.index.tolist(),
+        'y': df.index.tolist()
     }
 
-    x = df.iloc[:, :1].values[:-seq_len]
-    y = df.iloc[:, :1].values[seq_len:]
+    # x = df.iloc[:, :1].values #[:-seq_len]
+    y = df.iloc[:, :1].values  # [seq_len:] # 'temperature_comedor_sensor'
+    x_features = df.iloc[:, 1:].values  # [:-seq_len]
 
-    x_features = df.iloc[:, 1:].values[:-seq_len]
-    y_features = np.random.normal(size=(y.shape[0], 1)) # you should change this with the appropriate y features
+    # y_features = np.random.normal(size=(y.shape[0], 1)) # you should change this with the appropriate y features
 
-    x_features = (x_features - x_features.mean(axis=0))/(x_features.std(axis=0) + 1e-6)
+    x_features = (x_features - x_features.mean(axis=0)) / (x_features.std(axis=0) + 1e-6)
+
+    y_features = df.iloc[:, :1].shift(1).fillna(value=0).values.reshape((-1, 1))
     y_features = (y_features - y_features.mean(axis=0)) / (y_features.std(axis=0) + 1e-6)
 
-    mu = x.mean()
-    std = x.std()
-    x = (x - mu) / std
+    mu = y.mean()
+    std = y.std()
+    # x = (x - mu) / std
     y = (y - mu) / std
 
-    x = np.concatenate([x, x_features], axis=1)
+    x = x_features
 
     assert np.isnan(x).sum() == 0 and np.isnan(y_features).sum() == 0
     assert x.shape[0] == y.shape[0]
@@ -113,14 +115,15 @@ def get_daily_test_set(x, split=.2, seq_len=24):
 
 
 @gin.configurable
-def train_test_split(df, test_mode="fixed", split=.7):
+def train_test_split(df, test_mode="fixed", split=.7, split_idx=3200):
     if test_mode == "daily" and isinstance(df.index, pd.DatetimeIndex):
         logging.warning("Could not perform daily test. Index is not an instance of pd.DatetimeIndex")
         tr, ts = get_daily_test_set(df, split=split)
     else:
-        split_idx = int(df.shape[0] * split)
+        # split_idx = int(df.shape[0] * split)
         tr = df.iloc[:split_idx, :]
         ts = df.iloc[split_idx:, :]
+        # vs = df.iloc[split_idx:, :] # validation set
 
     return tr, ts
 

@@ -62,12 +62,18 @@ def clf_metrics(y, y_hat):
     }
 
 
+def mape(y, y_hat):
+    mape = np.abs((y - y_hat) / y_hat) * 100
+    return mape
+
+
 def regr_metrics(y, y_hat):
     assert y.shape == y_hat.shape
     return {
         'mse': np.mean(np.square(y - y_hat)),
         'mae': np.mean(np.abs(y - y_hat)),
-        'smape': np.mean(smape(y, y_hat))
+        'smape': np.mean(smape(y, y_hat)),
+        'mape': np.mean(mape(y, y_hat))
     }
 
 

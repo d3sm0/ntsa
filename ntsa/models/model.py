@@ -279,7 +279,6 @@ class Seq2Seq(RNN):
         self._encoder_attn = encoder_attn
         self._decoder_attn = decoder_attn
 
-
     def _build_op(self):
         h = tf.layers.dense(self.x, units=128)
 
@@ -299,11 +298,33 @@ class Seq2Seq(RNN):
         self._reg = self.reg_op([encoder_states, decoder_states])
 
 
+@gin.configurable
 class DARNN(Seq2Seq):
-    def __init__(self, input_shapes, config, scope="darnn"):
-        super(DARNN, self).__init__(input_shapes, config=config, encoder_attn="input_attn", decoder_attn="time_attn",
+    def __init__(self, input_shapes, config, encoder_attn=None, decoder_attn=None, scope="darnn"):
+        super(DARNN, self).__init__(input_shapes,
+                                    config=config,
+                                    encoder_attn=encoder_attn,
+                                    decoder_attn=decoder_attn,
                                     scope=scope)
-        self._config = config
+
+    def _build_op(self):
+        h = self.x
+        encoder = RecurrentEncoder(output_shape=None, scope="encoder", attn=self._encoder_attn)
+        encoder_output, encoder_state, encoder_states = encoder(h, keep_prob=self.keep_prob)
+
+        decoder = RecurrentDecoder(output_shape=self._output_shape,
+                                   seq_len=self._seq_len,
+                                   attn=self._decoder_attn,
+                                   scope="decoder")
+
+        decoder_output, decoder_state, decoder_states = decoder(x=self.y_features[:, 0, :1],
+                                                                keep_prob=self.keep_prob,
+                                                                encoder_states=encoder_states,
+                                                                init_state=encoder_state,
+                                                                y_features=self.y_features)
+        self.h = self._project_output(decoder_output)
+
+        # self._reg = self.reg_op([encoder_states, decoder_states])
 
 
 @gin.configurable

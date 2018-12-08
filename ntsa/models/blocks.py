@@ -97,7 +97,7 @@ class RecurrentDecoder(Recurrent):
               encoder_states=None,
               init_state=None,
               y_features=None):
-        cell = rnn_block(layers=(128,), keep_prob=keep_prob, use_residual=False)
+        cell = rnn_block(keep_prob=keep_prob)
 
         if self._attn == "time":
             attn = TimeAttention(input_shape=y_features.get_shape().as_list()[1],
@@ -110,7 +110,7 @@ class RecurrentDecoder(Recurrent):
                                     memory=encoder_states,
                                     y_features=y_features)
         else:
-            attn = Attention(output_shape=self._output_shape)
+            attn = DecoderAttention(output_shape=self._output_shape, y_features=y_features)
 
         if init_state is None:
             init_state = cell.zero_state(batch_size=tf.shape(x)[0], dtype=tf.float32)
@@ -214,6 +214,14 @@ class Attention(object):
             return h
 
 
+class DecoderAttention(Attention):
+    def __init__(self, output_shape=None, y_features=None, name='decoder_attention'):
+        super(DecoderAttention, self).__init__(output_shape, memory=y_features, name=name)
+
+    def apply(self, query, state, t):
+        return self._memory[:, t, :], state
+
+
 @gin.configurable
 class InputAttention(Attention):
 
@@ -245,10 +253,10 @@ class InputAttention(Attention):
         x_tilde = tf.multiply(alpha, query)
         return x_tilde, state
 
-
+@gin.configurable
 class TimeAttention(Attention):
 
-    def __init__(self, input_shape, output_shape, memory, y_features, name='time_attention', use_bias=False):
+    def __init__(self, input_shape, output_shape, memory, y_features, name='time_attention', use_bias=False, alpha=0):
         super(TimeAttention, self).__init__(output_shape=output_shape,
                                             memory=memory,
                                             use_bias=True,
@@ -256,14 +264,20 @@ class TimeAttention(Attention):
         # input_shape == encoder hidden size 128
         self._input_shape = memory.get_shape().as_list()[1]
         self._y_features = y_features
-        self._memory_layer = self.memory_layer(memory.get_shape().as_list()[-1], use_bias=use_bias)
+        if alpha:
+            k = Kaf(input_shape=alpha)
+            self._act = lambda x: tf.nn.softmax(k(x) + x)
+        else:
+            self._act = tf.nn.softmax
+        self._memory_layer = self.memory_layer(memory.get_shape().as_list()[-1], use_bias=use_bias, act=self._act)
         self._query_layer = tf.layers.Dense(units=1, use_bias=use_bias, name='query_layer',
                                             kernel_initializer=tf.variance_scaling_initializer)
 
+    # TODO replace here with an estimate of y[t-1]
     def apply(self, query, state, time):
         # batch_size, seq_len, encoder + decoder_state
         context = self.context(state)
-        y_tilde = self._query_layer(tf.concat([query, self._y_features[:, time, :], context], axis=1))
+        y_tilde = self._query_layer(tf.concat([self._y_features[:, time, :], context], axis=1))
         return y_tilde, state
 
     def context(self, state):
@@ -274,10 +288,10 @@ class TimeAttention(Attention):
         return context
 
     @staticmethod
-    def memory_layer(input_shape, use_bias=False):
+    def memory_layer(input_shape, use_bias=False, act=tf.nn.softmax):
         with tf.variable_scope('beta', reuse=tf.AUTO_REUSE, initializer=tf.initializers.variance_scaling):
             fc_0 = tf.layers.Dense(units=input_shape, use_bias=use_bias, activation=tf.nn.tanh, name='fc_0')
-            fc_1 = tf.layers.Dense(units=1, use_bias=use_bias, activation=tf.nn.softmax, name='fc_1')
+            fc_1 = tf.layers.Dense(units=1, use_bias=use_bias, activation=act, name='fc_1')
         return lambda x: fc_1(fc_0(x))
 
 
@@ -308,7 +322,7 @@ class AlignedAttention(Attention):
         c = tf.reduce_sum(w * self._memory, 1)
         s_tilde = self._query_layer(tf.concat([state, c], axis=1))
 
-        query = tf.concat([self._y_features[:, t,:], query], axis=-1)
+        query = tf.concat([self._y_features[:, t, :], query], axis=-1)
         return query, s_tilde
 
 
@@ -339,8 +353,9 @@ def encode(h, cell, encoder_state=None, seq_len=24, time_first=False, attn=None)
 
     output.set_shape((None, seq_len, output.get_shape()[-1]))
     states.set_shape((None, seq_len, output.get_shape()[-1]))
-#
+    #
     return output, state, states
+
 
 def decode(last_y, cell, decoder_state=None, seq_len=24, time_first=False, attn=None):
     def cond_stop(time, prev_output, prev_state, output, states):
@@ -369,4 +384,5 @@ def decode(last_y, cell, decoder_state=None, seq_len=24, time_first=False, attn=
         states = tf.transpose(states, (1, 0, 2))
 
     output.set_shape((None, seq_len, output.get_shape()[-1]))
+    states.set_shape((None, seq_len, states.get_shape()[-1]))
     return output, state, states

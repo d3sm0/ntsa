@@ -42,7 +42,7 @@ def mask_output(h, seq_len, pred_len):
 
 
 @gin.configurable(module='tf.train')
-def train_fn(lr=1e-2, opt=tf.train.RMSPropOptimizer, use_decay=False, global_step=None, decay_steps=1., decay_rate=0.):
+def train_fn(lr=1e-2, opt=tf.train.AdamOptimizer, use_decay=False, global_step=None, decay_steps=1., decay_rate=0.):
     if use_decay:
         lr = tf.train.polynomial_decay(
             global_step=global_step,
@@ -342,6 +342,10 @@ def smape(y, y_hat, eps=0.1):
     smape = tf.div(2. * tf.abs(y_hat - y), summ, name="smape")
     return smape
 
+def mape(y,y_hat):
+    mape = tf.reduce_mean(tf.abs((y - y_hat) / y)) * tf.convert_to_tensor(100.)
+    return mape
+
 
 def which_loss(loss_op):
     if loss_op == "mae":
@@ -467,7 +471,8 @@ def regr_metrics(y, y_hat):
         'mse': mse(y, y_hat),
         'mae': mae(y, y_hat),
         'smape': smape(y, y_hat),
-        'rmse': tf.sqrt(mse(y, y_hat))
+        'rmse': tf.sqrt(mse(y, y_hat)),
+        'mape':mape(y, y_hat)
     }
     return regr_ops
 
@@ -477,7 +482,7 @@ def gauss_kernel(x, D, gamma=1.):
     if x.get_shape().ndims < 4:
         D = tf.reshape(D, (1, 1, -1))
     else:
-        D = tf.reshape(D, (1, 1, 1, 1, -1))
+        D = tf.reshape(D, (1, 1, 1, -1))
 
     return tf.exp(- gamma * tf.square(x - D))
 

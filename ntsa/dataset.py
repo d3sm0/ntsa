@@ -170,6 +170,6 @@ def build_train_test_datasets(df, config):
                        seq_len=config.seq_len,
                        pred_len=config.pred_len,
                        random_start=False,
-                       window=config.windowb)
+                       window=config.window)
 
     return train_set, test_set, test_df
