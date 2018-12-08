@@ -274,17 +274,20 @@ class RNN(Base):
 
 @gin.configurable
 class Seq2Seq(RNN):
-    def __init__(self, input_shapes, config, attn=None, scope="seq2seq"):
+    def __init__(self, input_shapes, config, encoder_attn=None, decoder_attn=None, scope="seq2seq"):
         super(Seq2Seq, self).__init__(input_shapes, config=config, scope=scope)
-        self._attn = attn
+        self._encoder_attn = encoder_attn
+        self._decoder_attn = decoder_attn
+
 
     def _build_op(self):
         h = tf.layers.dense(self.x, units=128)
 
-        encoder = RecurrentEncoder(output_shape=None, scope="encoder", attn=self._attn)
+        encoder = RecurrentEncoder(output_shape=None, scope="encoder", attn=self._encoder_attn)
         encoder_output, encoder_state, encoder_states = encoder(h, keep_prob=self.keep_prob)
 
-        decoder = RecurrentDecoder(output_shape=self._output_shape, seq_len=self._pred_len, attn=self._attn, scope="decoder")
+        decoder = RecurrentDecoder(output_shape=self._output_shape, seq_len=self._pred_len, attn=self._decoder_attn,
+                                   scope="decoder")
 
         decoder_output, decoder_state, decoder_states = decoder(x=self.x[:, -1, :1],
                                                                 keep_prob=self.keep_prob,
@@ -297,11 +300,9 @@ class Seq2Seq(RNN):
 
 
 class DARNN(Seq2Seq):
-    def __init__(self, input_shapes, config, attn="aligned"):
-        super(DARNN, self).__init__(input_shapes,
-                                    attn=attn,
-                                    config=config,
-                                    scope="darnn")
+    def __init__(self, input_shapes, config, scope="darnn"):
+        super(DARNN, self).__init__(input_shapes, config=config, encoder_attn="input_attn", decoder_attn="time_attn",
+                                    scope=scope)
         self._config = config
 
 

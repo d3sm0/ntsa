@@ -66,7 +66,7 @@ class Recurrent(Block):
     def apply(self, x, keep_prob=None):
         cell = rnn_block(keep_prob=keep_prob)
 
-        if self._attn:
+        if self._attn is not None:
             attn = InputAttention(output_shape=self._output_shape, memory=x)
         else:
             attn = Attention(output_shape=self._output_shape)
@@ -188,7 +188,7 @@ class StochasticNeuralDecoder(NeuralDecoder):
         h = fc_block(h, keep_prob=keep_prob)
 
         h = tf.reduce_mean(h, axis=0)  # average over samples
-        z = get_z(h, latent_shape=1, dist="normal")
+        z = get_z(h, latent_shape=1, dist="multi")
         return z
 
 
@@ -308,7 +308,7 @@ class AlignedAttention(Attention):
         c = tf.reduce_sum(w * self._memory, 1)
         s_tilde = self._query_layer(tf.concat([state, c], axis=1))
 
-        query = tf.concat([self._y_features[:, t, :], query], axis=-1)
+        query = tf.concat([self._y_features[:, t,:], query], axis=-1)
         return query, s_tilde
 
 
@@ -339,9 +339,8 @@ def encode(h, cell, encoder_state=None, seq_len=24, time_first=False, attn=None)
 
     output.set_shape((None, seq_len, output.get_shape()[-1]))
     states.set_shape((None, seq_len, output.get_shape()[-1]))
-    #
+#
     return output, state, states
-
 
 def decode(last_y, cell, decoder_state=None, seq_len=24, time_first=False, attn=None):
     def cond_stop(time, prev_output, prev_state, output, states):

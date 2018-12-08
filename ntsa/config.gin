@@ -29,7 +29,7 @@ train_fn.decay_rate = 0.7
 
 Logger.base_path = "../logs"
 
-train_test_split.test_mode = "daily"
+train_test_split.test_mode = "fixed"
 train_test_split.split = .8
 
 Runner.summarize_every= 1000
