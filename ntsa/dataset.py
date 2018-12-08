@@ -8,7 +8,7 @@ log = logging.getLogger("dataset")
 
 
 class Series(object):
-    def __init__(self, x, seq_len, name="series", should_pad=False):
+    def __init__(self, x, seq_len, name="series", should_pad=True):
         self._x = x
         self._name = name
         self._shape = (seq_len, x.shape[-1])
@@ -20,9 +20,7 @@ class Series(object):
         x = self._x[idx: idx + self._seq_len]
         pad_size = self._seq_len - x.shape[0]
         if pad_size and self._should_pad:
-            mu = x.mean(axis=0)
-            pad = np.repeat(mu, pad_size)
-            x = np.concatenate([x, pad], axis=0)
+            x = np.pad(x, mode='mean', pad_width=((0, pad_size), (0, 0)))
         return x
 
     def __len__(self):
@@ -62,7 +60,7 @@ class Dataset(object):
         self._dates = dates if dates is not None else {"x": np.array([]), "y": np.array([])}
         self._stats = stats
         self._n_batch = ((data['x'].shape[0] - seq_len) // window)
-        self._batch_size = batch_size
+        self._batch_size = min(batch_size, self._n_batch)
         self._seq_len = seq_len
         self._random_start = random_start
         self._window = window
@@ -78,26 +76,29 @@ class Dataset(object):
 
         batch = {k: [] for k in self._data.keys()}
         dates = {"x": [], "y": []}
-        should_stop = False
+        _, reminder = divmod(self.size, self._window)
         for idx in range(self._idx, self.size, self._window):
             for k in self._data.keys():
                 b = self._data[k][idx]
-                if k == 'x' and b.shape[0] < self._seq_len:
-                    should_stop = True
-                    break
                 batch[k].append(b)
-            dates["x"].append(self._dates['x'][idx:idx + self._seq_len])
-            dates["y"].append(self._dates['y'][idx:idx + self._pred_len])
 
-            if len(batch['x']) == self._batch_size:
+            d_x = self._dates['x'][idx:idx + self._seq_len]
+            d_y = self._dates['y'][idx:idx + self._pred_len]
+
+            if len(d_x) < self._pred_len:
+                pad_size = self._pred_len - len(d_y)
+                d_x = np.pad(d_x, (0, pad_size), mode='constant', constant_values=0.)
+            if len(d_y) < self._pred_len:
+                pad_size = self._pred_len - len(d_y)
+                d_y = np.pad(d_y, (0, pad_size), mode='constant', constant_values=0.)
+            dates['x'].append(d_x)
+            dates['y'].append(d_y)
+
+            if len(batch['x']) == self._batch_size or idx == self.size - reminder:
                 batch = {k: np.stack(v, axis=0) for k, v in batch.items()}
                 yield batch, dates
                 batch = {k: [] for k in self._data.keys()}
                 dates = {"x": [], "y": []}
-
-            if should_stop:
-                # yield batch, dates
-                return
 
     def __repr__(self):
         return f'Dataset: {self._mode}, Batches: {self._n_batch}'
@@ -169,6 +170,6 @@ def build_train_test_datasets(df, config):
                        seq_len=config.seq_len,
                        pred_len=config.pred_len,
                        random_start=False,
-                       window=config.pred_len)
+                       window=config.windowb)
 
     return train_set, test_set, test_df

@@ -2,12 +2,15 @@
 # -*- coding: utf-8 -*-
 
 from functools import partial
+import logging
 
 import gin.tf
 import numpy as np
 import tensorflow as tf
 
 from sdtw.soft_dtw_fast import _jacobian_product_sq_euc, _soft_dtw, _soft_dtw_grad
+
+logging.getLogger("tensorflow")
 
 
 @gin.configurable
@@ -476,8 +479,7 @@ def gauss_kernel(x, D, gamma=1.):
     else:
         D = tf.reshape(D, (1, 1, 1, 1, -1))
 
-    gauss_kernel = tf.exp(- gamma * tf.square(x - D))
-    return gauss_kernel
+    return tf.exp(- gamma * tf.square(x - D))
 
 
 def gauss_kernel2D(x, Dx, Dy, gamma=1.):

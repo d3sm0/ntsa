@@ -3,7 +3,7 @@
 
 import gin.tf.external_configurables
 
-from utils.tf_utils import fc_block, conv1d_block, rnn_block, get_z, tf
+from utils.tf_utils import fc_block, conv1d_block, rnn_block, get_z, tf, Kaf
 
 
 class Block(object):
@@ -66,7 +66,7 @@ class Recurrent(Block):
     def apply(self, x, keep_prob=None):
         cell = rnn_block(keep_prob=keep_prob)
 
-        if self._attn:
+        if self._attn is not None:
             attn = InputAttention(output_shape=self._output_shape, memory=x)
         else:
             attn = Attention(output_shape=self._output_shape)
@@ -188,7 +188,7 @@ class StochasticNeuralDecoder(NeuralDecoder):
         h = fc_block(h, keep_prob=keep_prob)
 
         h = tf.reduce_mean(h, axis=0)  # average over samples
-        z = get_z(h, latent_shape=1, dist="normal")
+        z = get_z(h, latent_shape=1, dist="multi")
         return z
 
 
@@ -231,13 +231,14 @@ class InputAttention(Attention):
         self._input_shape = memory.get_shape()[-1]
 
     def apply(self, query, state, t):
-        # batch_size, input_shape, cell_size + seq_len
-        x = tf.concat([tf.tile(tf.expand_dims(state, axis=1), (1, self._input_shape, 1)), self._memory], axis=2)
-        x = self._memory_layer(x)
-        x = tf.squeeze(x, axis=2)
-        alpha = tf.nn.softmax(x)
-        x_tilde = tf.multiply(alpha, query)
-        return x_tilde
+        with tf.variable_scope(self._name, values=[query]):
+            # batch_size, input_shape, cell_size + seq_len
+            x = tf.concat([tf.tile(tf.expand_dims(state, axis=1), (1, self._input_shape, 1)), self._memory], axis=2)
+            x = self._memory_layer(x)
+            x = tf.squeeze(x, axis=2)
+            alpha = tf.nn.softmax(x)
+            x_tilde = tf.multiply(alpha, query)
+        return x_tilde, state
 
 
 class TimeAttention(Attention):
