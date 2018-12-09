@@ -51,4 +51,4 @@ CGAN.g_lr = 0.001
 DARNN.encoder_attn = 'input'
 DARNN.decoder_attn = 'time'
 InputAttention.alpha = 21 # this is related to the size of the input
-TimeAttention.alpha = 1
+TimeAttention.alpha = 0

@@ -27,6 +27,7 @@ def main(config):
         if config.restore_path is not None:
             config.__dict__.update(**Logger.load(config.restore_path))
             config.mode = mode
+            config.window = 1
 
     if config.gpu:
         os.environ["CUDA_VISIBLE_DEVICES"] = str(config.gpu)
@@ -80,7 +81,7 @@ if __name__ == "__main__":
     parser.add_argument('--keep_prob', type=float, default=1., help='Keep Prob')
     parser.add_argument('--pred_len', type=int, default=1, help='Size of the prediction')
     parser.add_argument('--seq_len', type=int, default=10, help='Size of the history')
-    parser.add_argument('--window', type=int, default=10, help='Size of the iteration window')
+    parser.add_argument('--window', type=int, default=1, help='Size of the iteration window')
     parser.add_argument("--gpu", default=1, type=int, help="Number of gpus.")
     parser.add_argument("--gpu_ratio", default=1.,type=int, help="percentage of the GPU memory to allocate to the experiment")
 

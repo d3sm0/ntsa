@@ -8,7 +8,7 @@ import gin.tf
 import numpy as np
 import tensorflow as tf
 
-from sdtw.soft_dtw_fast import _jacobian_product_sq_euc, _soft_dtw, _soft_dtw_grad
+##from sdtw.soft_dtw_fast import _jacobian_product_sq_euc, _soft_dtw, _soft_dtw_grad
 
 logging.getLogger("tensorflow")
 
@@ -308,7 +308,7 @@ def batched_euclidean_distance(y_hat, y, squared=True):
     return tf.sqrt(d) if not squared else d
 
 
-@tf.custom_gradient
+#@tf.custom_gradient
 @gin.configurable
 def sdtw_loss(y_hat, y, gamma=0.01):
     y_hat = tf.cast(y_hat, tf.float64)

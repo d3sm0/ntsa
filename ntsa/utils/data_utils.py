@@ -55,9 +55,9 @@ def build_preds(preds, path=None, stats=None):
         preds = preds * std + mu
 
     plot_report(preds, path=path)
-    if preds.index.duplicated().any():
-        logging.log(logging.WARN, "Duplicated found in prediction index")
-        preds = preds[~preds.index.duplicated(keep='first')]
+    # if preds.index.duplicated().any():
+    #     logging.log(logging.WARN, "Duplicated found in prediction index")
+    #     preds = preds[~preds.index.duplicated(keep='first')]
     preds.to_csv(path + "_report.csv")
     logging.info(f"Report saved at {path}")
     return preds
