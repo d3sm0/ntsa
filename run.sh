@@ -14,5 +14,5 @@ module load Tensorflow/1.5.0-foss-2017a-Python-3.6.4
 module load Tkinter/3.6.4-foss-2017a-Python-3.6.4
 source /homedtic/stotaro/tf_cpu/bin/activate
 
-python main.py
+python main.py --alpha $1 --beta $2
 

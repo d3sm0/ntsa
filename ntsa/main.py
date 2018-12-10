@@ -78,6 +78,8 @@ if __name__ == "__main__":
     parser.add_argument('--note', type=str, default=None, help='Some description of the experiment')
     parser.add_argument('--steps', type=int, default=int(1e5), help='Training steps')
     parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
+    parser.add_argument('--alpha', type=int, default=1, help='Set to 1 to use kaf on input')
+    parser.add_argument('--beta', type=int, default=1, help='Set to 1 to use kaf on time')
     parser.add_argument('--keep_prob', type=float, default=1., help='Keep Prob')
     parser.add_argument('--pred_len', type=int, default=1, help='Size of the prediction')
     parser.add_argument('--seq_len', type=int, default=10, help='Size of the history')

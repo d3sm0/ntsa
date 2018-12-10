@@ -50,5 +50,5 @@ CGAN.g_lr = 0.001
 
 DARNN.encoder_attn = 'input'
 DARNN.decoder_attn = 'time'
-InputAttention.alpha = 21 # this is related to the size of the input
-TimeAttention.alpha = 0
+InputAttention.use_kaf = True # this is related to the size of the input
+TimeAttention.use_kaf = True

@@ -230,14 +230,14 @@ class InputAttention(Attention):
                  memory,
                  name='input_attention',
                  use_bias=False,
-                 alpha=0):
+                 use_kaf=0):
         super(InputAttention, self).__init__(
             output_shape=output_shape,
             memory=tf.transpose(memory, (0, 2, 1)),
             name=name,
         )
-        if alpha:
-            k = Kaf(input_shape=alpha)
+        if use_kaf:
+            k = Kaf(input_shape=self._memory.get_shape()[1])
             self._act = lambda x: tf.nn.softmax(k(x) + x)
         else:
             self._act = tf.nn.softmax
@@ -256,7 +256,7 @@ class InputAttention(Attention):
 @gin.configurable
 class TimeAttention(Attention):
 
-    def __init__(self, input_shape, output_shape, memory, y_features, name='time_attention', use_bias=False, alpha=0):
+    def __init__(self, input_shape, output_shape, memory, y_features, name='time_attention', use_bias=False, use_kaf=False):
         super(TimeAttention, self).__init__(output_shape=output_shape,
                                             memory=memory,
                                             use_bias=True,
@@ -264,8 +264,8 @@ class TimeAttention(Attention):
         # input_shape == encoder hidden size 128
         self._input_shape = memory.get_shape().as_list()[1]
         self._y_features = y_features
-        if alpha:
-            k = Kaf(input_shape=alpha)
+        if use_kaf:
+            k = Kaf(input_shape=self._output_shape)
             self._act = lambda x: tf.nn.softmax(k(x) + x)
         else:
             self._act = tf.nn.softmax

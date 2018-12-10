@@ -17,7 +17,8 @@ def get_config(parsed_args):
     import gin.tf.external_configurables
 
     gin.parse_config_file('config.gin')
-
+    gin.bind_parameter('InputAttention.use_kaf', parsed_args.alpha)
+    gin.bind_parameter('TimeAttention.use_kaf', parsed_args.beta)
     return parsed_args
 
 
