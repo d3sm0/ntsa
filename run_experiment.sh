@@ -13,9 +13,10 @@ set -x
 
 declare -a kaf=(0 1)
 mkdir -p jobs
-for i in "$kaf[@]"; do
-    for j in "$kaf[@]"; do
-        sbatch run.sh $"i" $"j"
+for i in "${kaf[@]}"; do
+    for j in "${kaf[@]}"; do
+        echo "Running DARNN with $i and $j"
+#        sbatch run.sh "$i" "$j"
     done
 done
 

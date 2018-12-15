@@ -73,7 +73,7 @@ if __name__ == "__main__":
     parser.add_argument('--model', type=str, default="darnn", help='Model name in base path')
     parser.add_argument('--mode', type=str, default="train", help='Mode: train, test, predict.')
     parser.add_argument('--loss', type=str, default="mae", help='Loss type. "clf","smape", mae ')
-    parser.add_argument('--dataset_path', type=str, default="../data/benchmark/sm1_2010.csv", help='Data path')
+    parser.add_argument('--dataset_path', type=str, default="../data/benchmark/nasdaq.csv", help='Data path')
     parser.add_argument('--restore_path', type=str, default=None, help='Base path')
     parser.add_argument('--note', type=str, default=None, help='Some description of the experiment')
     parser.add_argument('--steps', type=int, default=int(1e5), help='Training steps')

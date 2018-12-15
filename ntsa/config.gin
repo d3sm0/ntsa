@@ -44,11 +44,12 @@ CNP.cp = 12
 CNP.sample_cp = False
 NP.z_samples = 1
 
-Seq2Seq.encoder_attn = 'input'
+Seq2Seq.encoder_attn = None
+Seq2Seq.decoder_attn = None
 CGAN.d_lr = 0.1
 CGAN.g_lr = 0.001
 
 DARNN.encoder_attn = 'input'
 DARNN.decoder_attn = 'time'
-InputAttention.use_kaf = True # this is related to the size of the input
-TimeAttention.use_kaf = True
+InputAttention.use_kaf = True
+TimeAttention.use_kaf = False
