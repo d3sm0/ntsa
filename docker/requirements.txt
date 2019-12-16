@@ -61,7 +61,7 @@ six==1.11.0
 sklearn==0.0
 soft-dtw==0.1.dev0
 tensorboard==1.10.0
-tensorflow==1.10.1
+tensorflow==1.15.0
 tensorflow-probability==0.4.0
 termcolor==1.1.0
 terminado==0.8.1
