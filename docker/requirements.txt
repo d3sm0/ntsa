@@ -2,7 +2,7 @@ absl-py==0.5.0
 appnope==0.1.0
 astor==0.7.1
 backcall==0.1.0
-bleach==2.1.4
+bleach==3.3.0
 cycler==0.10.0
 Cython==0.29
 decorator==4.3.0
